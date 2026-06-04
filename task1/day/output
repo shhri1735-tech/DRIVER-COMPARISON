@@ -1,1 +1,22 @@
+## ESP8266 vs ESP32 Comparison
 
+| Feature         | ESP8266        | ESP32              | Winner    |
+|-----------------|----------------|--------------------|-----------|
+| CPU Cores       | 1 (80/160 MHz) | 2 (up to 240 MHz)  | ESP32 ✅  |
+| RAM             | ~80 KB         | ~520 KB            | ESP32 ✅  |
+| Flash Memory    | 1–4 MB         | 4–16 MB            | ESP32 ✅  |
+| GPIO Pins       | 11 usable      | 30+                | ESP32 ✅  |
+| Wi-Fi           | ✅ Yes          | ✅ Yes              | Tie       |
+| Bluetooth       | ❌ No           | ✅ Yes (BLE + BT)  | ESP32 ✅  |
+| ADC Channels    | 1              | 18                 | ESP32 ✅  |
+| Price           | ~$2–3          | ~$4–6              | ESP8266   |
+| DHT22 Support   | ✅ Yes          | ✅ Yes              | Tie       |
+| Arduino Support | ✅ Yes          | ✅ Yes              | Tie       |
+
+## Reasons for Choosing ESP32
+
+- **Dual-core processor** handles sensor reading and Wi-Fi simultaneously
+- **More GPIO pins** gives flexibility for future sensors
+- **Bluetooth (BLE)** support opens up more connectivity options
+- **More RAM** means stable performance with larger sketches
+- **Future-proof** for expanding the project
