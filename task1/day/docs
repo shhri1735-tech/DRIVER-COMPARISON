@@ -1,8 +1,1 @@
 
-## DHT22 Pin Map (ESP32)
-
-| DHT22 Pin | ESP32 Pin | Notes                        |
-|-----------|-----------|------------------------------|
-| VCC       | 3.3V      | Do NOT connect to 5V         |
-| DATA      | GPIO4     | Add 10kΩ pull-up to 3.3V    |
-| GND       | GND       | Common ground                |
