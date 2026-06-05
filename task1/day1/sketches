@@ -1,1 +1,30 @@
+// src/day02_env_check.ino
+#include <Arduino.h>
 
+#if !defined(ESP32)
+#error "This sketch is only for ESP32 (select ESP32 Dev Module / DevKit V1 in Arduino IDE)"
+#endif
+
+void setup() {
+  Serial.begin(115200);
+  delay(500);
+
+  Serial.println("\n=== ESP32 DevKit V1 Build Check ===");
+
+  // Core / SDK info (safe across ESP32 core versions)
+  Serial.printf("ESP32 Chip Model: %s\n", ESP.getChipModel());
+  Serial.printf("Chip Revision: %d\n", ESP.getChipRevision());
+  Serial.printf("SDK Version: %s\n", ESP.getSdkVersion());
+
+  // System stats
+  Serial.printf("CPU Frequency: %u MHz\n", ESP.getCpuFreqMHz());
+  Serial.printf("Flash Size: %u bytes\n", ESP.getFlashChipSize());
+  Serial.printf("Free Heap: %u bytes\n", ESP.getFreeHeap());
+
+  Serial.println("Libraries OK if this compiles and runs successfully.");
+}
+
+void loop() {
+  delay(5000);
+  Serial.printf("Free Heap: %u bytes\n", ESP.getFreeHeap());
+}
