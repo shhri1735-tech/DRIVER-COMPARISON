@@ -1,0 +1,38 @@
+int retryCount = 0;
+
+void loop() {
+  if (WiFi.status() != WL_CONNECTED) {
+    retryCount++;
+
+    // Exponential backoff: 1s, 2s, 4s, 8s, max 16s
+    int backoff = min(1000 * (1 << retryCount), 16000);
+
+    Serial.print("WiFi lost! Retry ");
+    Serial.print(retryCount);
+    Serial.print(" in ");
+    Serial.print(backoff / 1000);
+    Serial.println("s...");
+
+    delay(backoff);
+
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
+    unsigned long startTime = millis();
+    while (WiFi.status() != WL_CONNECTED) {
+      delay(500);
+      Serial.print(".");
+      if (millis() - startTime > 15000) {
+        Serial.println("\nRetry timed out.");
+        return;
+      }
+    }
+
+    Serial.println("\nReconnected! ✓");
+    retryCount = 0;
+    printNetworkInfo();
+
+  } else {
+    retryCount = 0;
+    delay(3000);
+  }
+}
