@@ -1,0 +1,6 @@
+#DHT sensor library (by Adafruit)
+#PubSubClient (by Nick O'Leary)
+#ArduinoJson (by Benoit Blanchon)
+#ArduinoOTA (usually bundled with ESP32 core)
+
+#libraries to be installed
