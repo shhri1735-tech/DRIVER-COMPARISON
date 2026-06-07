@@ -1,0 +1,131 @@
+#include <WiFi.h>
+#include "time.h"
+
+// ===================== WIFI CONFIG =====================
+const char* ssid = "YOUR_SSID";
+const char* password = "YOUR_PASSWORD";
+
+// ===================== NTP CONFIG =====================
+// IST = UTC + 5:30 = 19800 seconds
+const long gmtOffset_sec = 19800;
+const int daylightOffset_sec = 0;
+
+// NTP servers
+const char* ntpServer1 = "pool.ntp.org";
+const char* ntpServer2 = "time.google.com";
+
+// ===================== TIME STATE =====================
+bool timeSynced = false;
+
+// ===================== WIFI CONNECT =====================
+void connectWiFi() {
+  Serial.print("Connecting to WiFi");
+
+  WiFi.begin(ssid, password);
+
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+    attempts++;
+
+    if (attempts > 20) { // ~10 seconds
+      Serial.println("\nWiFi failed. Restarting...");
+      ESP.restart();
+    }
+  }
+
+  Serial.println("\nWiFi connected");
+  Serial.print("IP: ");
+  Serial.println(WiFi.localIP());
+}
+
+// ===================== NTP SYNC =====================
+bool syncTime() {
+  Serial.println("Starting NTP sync...");
+
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer1, ntpServer2);
+
+  struct tm timeinfo;
+  int retry = 0;
+
+  while (!getLocalTime(&timeinfo)) {
+    Serial.println("Waiting for NTP...");
+
+    delay(1000);
+    retry++;
+
+    if (retry >= 10) { // 10 seconds timeout
+      Serial.println("NTP sync failed!");
+      return false;
+    }
+  }
+
+  Serial.println("NTP Sync successful");
+  timeSynced = true;
+
+  Serial.printf("Local time: %02d:%02d:%02d\n",
+                timeinfo.tm_hour,
+                timeinfo.tm_min,
+                timeinfo.tm_sec);
+
+  return true;
+}
+
+// ===================== ISO 8601 TIMESTAMP =====================
+String isoTimestamp() {
+  struct tm timeinfo;
+
+  if (!getLocalTime(&timeinfo)) {
+    return "1970-01-01T00:00:00+05:30";
+  }
+
+  char buffer[30];
+  snprintf(buffer, sizeof(buffer),
+           "%04d-%02d-%02dT%02d:%02d:%02d+05:30",
+           timeinfo.tm_year + 1900,
+           timeinfo.tm_mon + 1,
+           timeinfo.tm_mday,
+           timeinfo.tm_hour,
+           timeinfo.tm_min,
+           timeinfo.tm_sec);
+
+  return String(buffer);
+}
+
+// ===================== RETRY POLICY =====================
+bool ensureTimeSync() {
+  int backoff = 1000;
+
+  for (int i = 0; i < 3; i++) {
+    if (syncTime()) return true;
+
+    Serial.printf("Retrying NTP in %d ms...\n", backoff);
+    delay(backoff);
+    backoff *= 2;
+  }
+
+  return false;
+}
+
+// ===================== SETUP =====================
+void setup() {
+  Serial.begin(115200);
+  delay(500);
+
+  Serial.println("=== ESP32 NTP TimeService ===");
+
+  connectWiFi();
+
+  bool ok = ensureTimeSync();
+
+  if (!ok) {
+    Serial.println("WARNING: Time not synced (NTP blocked/firewall)");
+  }
+}
+
+// ===================== LOOP =====================
+void loop() {
+  Serial.println("Timestamp: " + isoTimestamp());
+  delay(5000);
+}
