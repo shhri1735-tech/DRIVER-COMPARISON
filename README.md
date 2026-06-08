@@ -1,5 +1,5 @@
 # Task 1
-- Day 01- Node comparision/Completed
+- Day 01- microprocessor comparision/Completed
 - Day 02- Arduino Core for ESP32 & USB Drivers/Completed
 # Task 2
 - Day 03 -wifi station mode and connection manager/Completed
