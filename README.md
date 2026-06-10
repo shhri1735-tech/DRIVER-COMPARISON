@@ -4,3 +4,5 @@
 # Task 2
 - Day 03 -wifi station mode and connection manager/Completed
 - Day 04 -NTP time sync and timestamps/Completed
+# Task 3
+-Day 05 -DHT22 setup
