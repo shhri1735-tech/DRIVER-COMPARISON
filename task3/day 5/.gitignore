@@ -1,1 +1,24 @@
+# Arduino build output
+build/
+*.bin
+*.elf
+*.hex
+*.map
 
+# Arduino IDE temp/cache files
+*.bak
+*.tmp
+.arduino15/
+
+# Mac system files
+.DS_Store
+
+# Windows system files
+Thumbs.db
+desktop.ini
+
+# VS Code settings (optional - remove if you want to share these)
+.vscode/
+
+# Libraries (people should install these themselves)
+libraries/
