@@ -1,107 +1,61 @@
+// src/day05_dht22.ino
 #include <DHT.h>
 
-// ── Pin & sensor config ──────────────────────────────────
-#define DHTPIN    4          // GPIO 4 (data line with 10kΩ pull-up)
-#define DHTTYPE   DHT22
-DHT dht(DHTPIN, DHTTYPE);
+#define DHT_PIN  4
+#define DHT_TYPE DHT22
+DHT dht(DHT_PIN, DHT_TYPE);
 
-// ── SensorBundle: holds one reading + validity flag ──────
-struct SensorBundle {
-  float temperature;   // degrees Celsius
-  float humidity;      // percent RH
-  bool  valid;         // false if checksum failed or NaN returned
+struct Reading {
+  float tempC;
+  float humidityPct;
+  bool valid;
 };
 
-// ── Median filter storage (last 3 good samples) ──────────
-const int FILTER_SIZE = 3;
-float tempHistory[FILTER_SIZE] = {0, 0, 0};
-float humHistory[FILTER_SIZE]  = {0, 0, 0};
-int   histIndex = 0;
-int   histCount = 0;   // tracks how many valid samples we have so far
-
-// ── Read with retry (up to maxTries attempts) ────────────
-SensorBundle readSensor(int maxTries = 3) {
-  SensorBundle result = {0.0, 0.0, false};
-
-  for (int attempt = 1; attempt <= maxTries; attempt++) {
-    delay(2100);  // DHT22 needs 2 s minimum between reads
-
+Reading readDhtRobust() {
+  Reading r = {NAN, NAN, false};
+  for (int attempt = 0; attempt < 3; attempt++) {
     float t = dht.readTemperature();
     float h = dht.readHumidity();
-
-    // isnan() catches NaN (failed reads); dht.getStatus() catches checksum errors
-    if (isnan(t) || isnan(h)) {
-      Serial.print("[WARN] Read failed on attempt ");
-      Serial.println(attempt);
-      continue;   // retry
+    if (!isnan(t) && !isnan(h) && h >= 0 && h <= 100) {
+      r.tempC = t;
+      r.humidityPct = h;
+      r.valid = true;
+      return r;
     }
-
-    // Plausibility check: reject physically impossible values
-    if (t < -40 || t > 80 || h < 0 || h > 100) {
-      Serial.print("[WARN] Out-of-range on attempt ");
-      Serial.println(attempt);
-      continue;
-    }
-
-    // Valid reading obtained
-    result.temperature = t;
-    result.humidity    = h;
-    result.valid       = true;
-    break;
+    delay(250);
   }
-
-  if (!result.valid) {
-    Serial.println("[ERROR] All attempts failed — skipping cycle.");
-  }
-
-  return result;
+  return r;
 }
 
-// ── Helper: median of 3 floats ───────────────────────────
 float median3(float a, float b, float c) {
-  if ((a <= b && b <= c) || (c <= b && b <= a)) return b;
-  if ((b <= a && a <= c) || (c <= a && a <= b)) return a;
-  return c;
+  if (a > b) { float t = a; a = b; b = t; }
+  if (b > c) { float t = b; b = c; c = t; }
+  if (a > b) { float t = a; a = b; b = t; }
+  return b;
 }
 
-// ── Apply median filter; returns filtered value ──────────
-float applyMedian(float* history, float newVal) {
-  history[histIndex % FILTER_SIZE] = newVal;
-  if (histCount < FILTER_SIZE) return newVal;  // not enough history yet
-  return median3(history[0], history[1], history[2]);
-}
-
-// ── Setup ────────────────────────────────────────────────
 void setup() {
   Serial.begin(115200);
   dht.begin();
-
-  Serial.println("[INFO] DHT22 starting — waiting 2 s for sensor warm-up...");
-  delay(2000);  // sensor warm-up time
-  Serial.println("[INFO] Ready.");
+  delay(2000);  // DHT warm-up
 }
 
-// ── Main loop ────────────────────────────────────────────
 void loop() {
-  SensorBundle reading = readSensor(3);  // up to 3 retries
+  static float tHist[3] = {NAN, NAN, NAN};
+  static float hHist[3] = {NAN, NAN, NAN};
+  static uint8_t idx = 0;
 
-  if (reading.valid) {
-    // Store in history and get filtered values
-    float filteredTemp = applyMedian(tempHistory, reading.temperature);
-    float filteredHum  = applyMedian(humHistory,  reading.humidity);
-
-    histIndex++;
-    histCount++;
-
-    // Print structured output matching future JSON field names
-    Serial.print("{");
-    Serial.print("\"temperature_c\":");  Serial.print(filteredTemp, 2);
-    Serial.print(",\"humidity_pct\":");  Serial.print(filteredHum, 2);
-    Serial.print(",\"raw_temp\":");      Serial.print(reading.temperature, 2);
-    Serial.print(",\"raw_hum\":");       Serial.print(reading.humidity, 2);
-    Serial.print(",\"filtered\":");      Serial.print(histCount >= FILTER_SIZE ? "true" : "false");
-    Serial.println("}");
+  Reading r = readDhtRobust();
+  if (r.valid) {
+    tHist[idx % 3] = r.tempC;
+    hHist[idx % 3] = r.humidityPct;
+    idx++;
+    float tMed = median3(tHist[0], tHist[1], tHist[2]);
+    float hMed = median3(hHist[0], hHist[1], hHist[2]);
+    Serial.printf("{\"temp_c\":%.1f,\"humidity_pct\":%.1f,\"valid\":true}\n", tMed, hMed);
+  } else {
+    Serial.println(F("{\"valid\":false,\"error\":\"dht_read_fail\"}"));
   }
-
-  // No delay here — readSensor() already waits 2.1 s internally per attempt
+  delay(2000);
 }
+
