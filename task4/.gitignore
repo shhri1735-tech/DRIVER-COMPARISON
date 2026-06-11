@@ -1,0 +1,21 @@
+# Secret credentials - NEVER commit
+include/secrets.h
+
+# Arduino/PlatformIO build files
+.pio/
+.pioenvs/
+.piolibdeps/
+build/
+*.bin
+*.elf
+
+# VS Code
+.vscode/
+
+# Mac/Linux/Windows system files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
