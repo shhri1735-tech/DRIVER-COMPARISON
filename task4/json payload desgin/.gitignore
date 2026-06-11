@@ -1,0 +1,33 @@
+# Arduino build output
+build/
+*.bin
+*.elf
+*.hex
+*.map
+
+# Arduino IDE files
+*.bak
+*.tmp
+**/.DS_Store
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# PlatformIO (if used)
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# Libraries (let others install via Library Manager)
+libraries/
+
+# Secrets / credentials (important for IoT projects!)
+secrets.h
+config_secret.h
+wifi_credentials.h
+*.env
+
+# OS files
+Thumbs.db
+Desktop.ini

@@ -1,0 +1,172 @@
+#include <Arduino.h>
+#include <ArduinoJson.h>
+
+// ── Schema version (bump when fields change) ──────────────────────────────────
+#define SCHEMA_VERSION   1
+#define MAX_PAYLOAD_SIZE 512
+
+// ── Sensor Bundle struct ──────────────────────────────────────────────────────
+struct SensorBundle {
+  int     schema_version;
+  String  node_id;
+  long    ts;           // Unix timestamp
+  float   temp_c;
+  float   humidity_pct;
+  bool    time_valid;
+  String  fw_version;
+};
+
+// ── Validate: returns false and prints reason if any required field is bad ────
+bool validateBundle(const SensorBundle& b) {
+  if (b.node_id.length() == 0) {
+    Serial.println("[VALIDATE] FAIL: node_id is empty");
+    return false;
+  }
+  if (b.ts <= 0) {
+    Serial.println("[VALIDATE] FAIL: ts is invalid (<= 0)");
+    return false;
+  }
+  if (b.temp_c < -40.0 || b.temp_c > 125.0) {
+    Serial.println("[VALIDATE] FAIL: temp_c out of sensor range");
+    return false;
+  }
+  if (b.humidity_pct < 0.0 || b.humidity_pct > 100.0) {
+    Serial.println("[VALIDATE] FAIL: humidity_pct out of range");
+    return false;
+  }
+  if (b.fw_version.length() == 0) {
+    Serial.println("[VALIDATE] FAIL: fw_version is empty");
+    return false;
+  }
+  Serial.println("[VALIDATE] OK");
+  return true;
+}
+
+// ── Serialize bundle → compact JSON string ────────────────────────────────────
+// Returns "" on failure (oversized or bad)
+String serializeBundle(const SensorBundle& b) {
+  StaticJsonDocument<256> doc;
+
+  doc["schema_version"] = b.schema_version;
+  doc["node_id"]        = b.node_id;
+  doc["ts"]             = b.ts;
+  doc["temp_c"]         = serialized(String(b.temp_c, 2));   // 2 decimal places
+  doc["humidity_pct"]   = serialized(String(b.humidity_pct, 1));
+  doc["time_valid"]     = b.time_valid;
+  doc["fw_version"]     = b.fw_version;
+
+  String output;
+  serializeJson(doc, output);   // compact (no spaces)
+
+  Serial.print("[SERIALIZE] Payload size: ");
+  Serial.print(output.length());
+  Serial.println(" bytes");
+
+  if (output.length() >= MAX_PAYLOAD_SIZE) {
+    Serial.println("[SERIALIZE] FAIL: Payload exceeds 512 bytes!");
+    return "";
+  }
+
+  return output;
+}
+
+// ── Deserialize JSON string → SensorBundle ────────────────────────────────────
+bool deserializeBundle(const String& jsonStr, SensorBundle& out) {
+  StaticJsonDocument<256> doc;
+  DeserializationError err = deserializeJson(doc, jsonStr);
+
+  if (err) {
+    Serial.print("[DESERIALIZE] FAIL: ");
+    Serial.println(err.c_str());
+    return false;
+  }
+
+  // Check required keys exist
+  if (!doc.containsKey("node_id") || !doc.containsKey("ts") ||
+      !doc.containsKey("temp_c")  || !doc.containsKey("humidity_pct") ||
+      !doc.containsKey("time_valid") || !doc.containsKey("fw_version")) {
+    Serial.println("[DESERIALIZE] FAIL: Missing required field(s)");
+    return false;
+  }
+
+  out.schema_version = doc["schema_version"] | 0;
+  out.node_id        = doc["node_id"].as<String>();
+  out.ts             = doc["ts"].as<long>();
+  out.temp_c         = doc["temp_c"].as<float>();
+  out.humidity_pct   = doc["humidity_pct"].as<float>();
+  out.time_valid     = doc["time_valid"].as<bool>();
+  out.fw_version     = doc["fw_version"].as<String>();
+
+  Serial.println("[DESERIALIZE] OK");
+  return true;
+}
+
+// ── Round-trip unit test ──────────────────────────────────────────────────────
+void runRoundTripTest() {
+  Serial.println("\n===== ROUND-TRIP TEST =====");
+
+  // Build a test bundle
+  SensorBundle original;
+  original.schema_version = SCHEMA_VERSION;
+  original.node_id        = "node_001";
+  original.ts             = 1718000000L;   // example Unix time
+  original.temp_c         = 28.45;
+  original.humidity_pct   = 62.3;
+  original.time_valid     = true;
+  original.fw_version     = "1.0.0";
+
+  // 1. Validate
+  if (!validateBundle(original)) { Serial.println("TEST ABORTED"); return; }
+
+  // 2. Serialize
+  String json = serializeBundle(original);
+  if (json.length() == 0) { Serial.println("TEST ABORTED"); return; }
+  Serial.print("[JSON] ");
+  Serial.println(json);
+
+  // 3. Deserialize back
+  SensorBundle recovered;
+  if (!deserializeBundle(json, recovered)) { Serial.println("TEST ABORTED"); return; }
+
+  // 4. Compare fields
+  bool pass = (recovered.node_id      == original.node_id)      &&
+              (recovered.ts           == original.ts)           &&
+              (recovered.time_valid   == original.time_valid)   &&
+              (recovered.fw_version   == original.fw_version)   &&
+              (abs(recovered.temp_c        - original.temp_c)        < 0.01) &&
+              (abs(recovered.humidity_pct  - original.humidity_pct)  < 0.1);
+
+  Serial.println(pass ? "[TEST] PASS ✓" : "[TEST] FAIL ✗");
+  Serial.println("===========================\n");
+}
+
+// ── Bad bundle test (should be rejected) ─────────────────────────────────────
+void runInvalidBundleTest() {
+  Serial.println("===== INVALID BUNDLE TEST =====");
+  SensorBundle bad;
+  bad.schema_version = SCHEMA_VERSION;
+  bad.node_id        = "";          // ← intentionally empty
+  bad.ts             = -1;          // ← invalid
+  bad.temp_c         = 28.0;
+  bad.humidity_pct   = 50.0;
+  bad.time_valid     = false;
+  bad.fw_version     = "";          // ← empty
+
+  bool valid = validateBundle(bad);
+  Serial.println(valid ? "[TEST] FAIL (should have been rejected)" : "[TEST] PASS – correctly rejected ✓");
+  Serial.println("================================\n");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+void setup() {
+  Serial.begin(115200);
+  delay(1500);
+  Serial.println("\n>> SensorBundle Schema Day – Zelbytes IoT Lab <<");
+
+  runRoundTripTest();
+  runInvalidBundleTest();
+}
+
+void loop() {
+  // Nothing in loop for this exercise
+}
