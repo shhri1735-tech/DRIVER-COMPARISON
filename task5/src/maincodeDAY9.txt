@@ -1,0 +1,143 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+#include "DHT.h"
+
+// --- DHT22 config ---
+#define DHTPIN    4        // GPIO4 — DATA wire connects here
+#define DHTTYPE   DHT22
+DHT dht(DHTPIN, DHTTYPE);
+
+// --- WiFi ---
+const char* SSID     = "YOUR_WIFI_SSID";
+const char* PASSWORD = "YOUR_WIFI_PASSWORD";
+
+// --- IoT Lab API ---
+const char* API_KEY    = "YOUR_IOT_LAB_API_KEY";
+const char* BASE_URL   = "https://api.iot-lab.example.com/api/iot-lab/v1";
+const char* WRITE_URL  = "https://api.iot-lab.example.com/api/iot-lab/v1/telemetry";
+const char* LATEST_URL = "https://api.iot-lab.example.com/api/iot-lab/v1/telemetry/latest";
+
+const float HUMIDITY_THRESHOLD = 30.0;  // irrigate below this %
+const int   POLL_INTERVAL_MS   = 30000; // 30 seconds
+
+// -------------------------------------------------------
+void setup() {
+    Serial.begin(115200);
+    dht.begin();
+
+    WiFi.begin(SSID, PASSWORD);
+    Serial.print("Connecting WiFi");
+    while (WiFi.status() != WL_CONNECTED) {
+        delay(500); Serial.print(".");
+    }
+    Serial.println("\nConnected! IP: " + WiFi.localIP().toString());
+}
+
+// -------------------------------------------------------
+// STEP 1: Read DHT11 and POST sensor data to API
+void postSensorData() {
+    float humidity    = dht.readHumidity();
+    float temperature = dht.readTemperature();  // Celsius
+
+    if (isnan(humidity) || isnan(temperature)) {
+        Serial.println("[DHT11] Read failed — check wiring!");
+        return;
+    }
+
+    Serial.printf("[DHT11] Temp: %.1f°C  Humidity: %.1f%%\n", temperature, humidity);
+
+    // Build JSON payload
+    StaticJsonDocument<200> payload;
+    payload["temperature_c"] = temperature;
+    payload["humidity"]      = humidity;
+    String body;
+    serializeJson(payload, body);
+
+    // POST to API
+    HTTPClient http;
+    http.begin(WRITE_URL);
+    http.addHeader("Content-Type", "application/json");
+    http.addHeader("X-Iot-Lab-Key", API_KEY);
+
+    int code = http.POST(body);
+    Serial.printf("[POST] Response code: %d\n", code);
+    if (code > 0) Serial.println("[POST] " + http.getString());
+    http.end();
+}
+
+// -------------------------------------------------------
+// STEP 2: GET /telemetry/latest and parse it
+void fetchLatest() {
+    HTTPClient http;
+    http.begin(LATEST_URL);
+    http.addHeader("X-Iot-Lab-Key", API_KEY);
+
+    int code = http.GET();
+    if (code != 200) {
+        Serial.printf("[GET] Failed with code: %d\n", code);
+        http.end();
+        return;
+    }
+
+    String response = http.getString();
+    http.end();
+
+    // Parse JSON
+    StaticJsonDocument<512> doc;
+    DeserializationError err = deserializeJson(doc, response);
+    if (err) {
+        Serial.print("[JSON] Error: "); Serial.println(err.c_str());
+        return;
+    }
+
+    float temp     = doc["latest"]["temperature_c"];
+    float humidity = doc["latest"]["humidity"];
+    String ts      = doc["latest"]["timestamp"].as<String>();
+
+    Serial.println("--- API Latest Values ---");
+    Serial.printf("  Temperature: %.2f °C\n", temp);
+    Serial.printf("  Humidity:    %.2f %%\n", humidity);
+    Serial.printf("  Timestamp:   %s\n", ts.c_str());
+
+    // STEP 3: Irrigation threshold logic
+    if (humidity < HUMIDITY_THRESHOLD) {
+        Serial.println("  [IRRIGATION] Humidity LOW — activating pump!");
+        // digitalWrite(RELAY_PIN, HIGH);  // uncomment if relay connected
+    } else {
+        Serial.println("  [OK] Soil moisture sufficient.");
+    }
+}
+
+// -------------------------------------------------------
+// STEP 4: GET /telemetry/series and log to Serial
+void fetchSeries() {
+    String url = String(BASE_URL) + "/telemetry/series?field=temperature_c&limit=24";
+    HTTPClient http;
+    http.begin(url);
+    http.addHeader("X-Iot-Lab-Key", API_KEY);
+
+    if (http.GET() != 200) { http.end(); return; }
+
+    DynamicJsonDocument doc(4096);
+    deserializeJson(doc, http.getString());
+    http.end();
+
+    Serial.println("--- Temperature Series (last 24) ---");
+    for (JsonObject entry : doc["series"].as<JsonArray>()) {
+        String label = entry["label"].as<String>();
+        float  value = entry["value"];
+        Serial.printf("  %s : %.2f °C\n", label.c_str(), value);
+    }
+}
+
+// -------------------------------------------------------
+void loop() {
+    postSensorData();   // Read DHT11 and push to cloud
+    delay(2000);        // Small gap between write and read
+    fetchLatest();      // Pull back latest + irrigation check
+    fetchSeries();      // Pull 24-reading series + log
+
+    Serial.println("---- waiting 30s ----\n");
+    delay(POLL_INTERVAL_MS);
+}

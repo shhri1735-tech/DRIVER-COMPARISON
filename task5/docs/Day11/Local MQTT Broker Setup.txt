@@ -1,0 +1,50 @@
+# Day 11 – Local MQTT Broker Setup (Eclipse Mosquitto)
+
+## What I Did
+Set up and tested an MQTT broker connection using the Zelbytes 
+hosted Eclipse Mosquitto broker for ESP32 telemetry publishing.
+
+## Broker Details
+- Broker Host : careers.zelbytes.com
+- Port        : 1883
+- Protocol    : MQTT
+- Topic       : zelbytes/lab/89/telemetry
+
+## Tools Used
+- Windows CMD (ping test)
+- PowerShell (port test)
+- Zelbytes IoT Lab dashboard (pub/sub test)
+
+## Tests Performed
+
+### 1. Ping Test
+ping careers.zelbytes.com
+Result: 4/4 packets received, 0% loss, avg 58ms
+
+### 2. Port Test (PowerShell)
+Test-NetConnection -ComputerName careers.zelbytes.com -Port 1883
+Result: TcpTestSucceeded = True
+
+### 3. MQTT Publish Test (Zelbytes Dashboard)
+Topic   : zelbytes/lab/89/telemetry
+Payload : {"temp_c":22.4,"humidity_pct":88.1,"soil_moisture_pct":42}
+Result  : Message appeared in broker log successfully
+
+## Firmware Constant Documented
+#define MQTT_BROKER  "careers.zelbytes.com"
+#define MQTT_PORT    1883
+#define MQTT_TOPIC   "zelbytes/lab/89/telemetry"
+
+## Checklist
+- [x] Mosquitto broker reachable (ping)
+- [x] Port 1883 open (TcpTestSucceeded: True)
+- [x] Pub/sub verified via Zelbytes dashboard
+- [x] No firewall issues (hosted broker, no local setup needed)
+- [x] MQTT_BROKER constant documented in secrets.h template
+
+## Key Learning
+- MQTT uses a publish/subscribe model via a broker
+- Zelbytes provides a hosted broker so no local installation needed
+- Port 1883 is the standard unencrypted MQTT port
+- Ping tests server reachability; TCP test confirms port is open
+- ESP32 will publish sensor JSON to the same topic in Day 12
