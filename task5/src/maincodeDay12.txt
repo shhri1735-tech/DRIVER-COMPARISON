@@ -1,0 +1,116 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <DHT.h>
+#include <ArduinoJson.h>
+#include <time.h>
+
+// ── ✏️ ONLY EDIT THESE ──────────────────────────────
+const char* API_KEY    = "YOUR_API_KEY_HERE";
+const char* MQTT_TOPIC = "zelbytes/lab/89/telemetry";
+
+const char* WIFI_SSID  = "YOUR_WIFI_SSID";
+const char* WIFI_PASS  = "YOUR_WIFI_PASSWORD";
+// ────────────────────────────────────────────────────
+
+// ── Zelbytes HTTP→MQTT Endpoint ──────────────────────
+const char* API_URL = "https://careers.zelbytes.com/api/iot-lab/v1/mqtt/publish";
+
+// ── DHT Sensor ──────────────────────────────────────
+#define DHTPIN  4
+#define DHTTYPE DHT22
+DHT dht(DHTPIN, DHTTYPE);
+
+unsigned long lastPublish = 0;
+const unsigned long PUBLISH_INTERVAL_MS = 60000;
+
+// ── WiFi ─────────────────────────────────────────────
+void connectWiFi() {
+  Serial.print("Connecting to WiFi");
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500); Serial.print(".");
+  }
+  Serial.println("\nWiFi OK: " + WiFi.localIP().toString());
+}
+
+// ── NTP ──────────────────────────────────────────────
+void syncNTP() {
+  configTime(0, 0, "pool.ntp.org");
+  Serial.print("Syncing NTP");
+  while (time(nullptr) < 1000000000UL) {
+    delay(500); Serial.print(".");
+  }
+  Serial.println(" OK");
+}
+
+// ── Publish via HTTP ──────────────────────────────────
+void publishTelemetry() {
+  float temp_c   = dht.readTemperature();
+  float humidity = dht.readHumidity();
+
+  if (isnan(temp_c) || isnan(humidity)) {
+    Serial.println("DHT read failed, skipping");
+    return;
+  }
+
+  int   soilRaw = analogRead(34);
+  float soilPct = constrain(map(soilRaw, 4095, 1500, 0, 100), 0, 100);
+  time_t now    = time(nullptr);
+
+  // ── Inner payload (sensor data) ──────────────────
+  StaticJsonDocument<256> innerDoc;
+  innerDoc["temp_c"]            = serialized(String(temp_c, 1));
+  innerDoc["humidity_pct"]      = serialized(String(humidity, 1));
+  innerDoc["soil_moisture_pct"] = (int)soilPct;
+  innerDoc["timestamp"]         = (long)now;
+
+  char innerPayload[256];
+  serializeJson(innerDoc, innerPayload);
+
+  // ── Outer HTTP body ───────────────────────────────
+  StaticJsonDocument<512> doc;
+  doc["api_key"] = API_KEY;
+  doc["topic"]   = MQTT_TOPIC;
+  doc["payload"] = innerPayload;
+  doc["qos"]     = 0;
+
+  char body[512];
+  serializeJson(doc, body);
+
+  Serial.println("Sending to: " + String(API_URL));
+  Serial.println("Body: " + String(body));
+
+  // ── HTTP POST ─────────────────────────────────────
+  HTTPClient http;
+  http.begin(API_URL);
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("Authorization", String("Bearer ") + API_KEY);
+
+  int httpCode = http.POST(body);
+
+  if (httpCode > 0) {
+    String response = http.getString();
+    Serial.printf("HTTP %d: %s\n\n", httpCode, response.c_str());
+  } else {
+    Serial.printf("HTTP Error: %s\n\n", http.errorToString(httpCode).c_str());
+  }
+
+  http.end();
+}
+
+// ── Setup ─────────────────────────────────────────────
+void setup() {
+  Serial.begin(115200);
+  dht.begin();
+  connectWiFi();
+  syncNTP();
+}
+
+// ── Loop ──────────────────────────────────────────────
+void loop() {
+  unsigned long now = millis();
+  if (now - lastPublish >= PUBLISH_INTERVAL_MS) {
+    lastPublish = now;
+    publishTelemetry();
+  }
+}
