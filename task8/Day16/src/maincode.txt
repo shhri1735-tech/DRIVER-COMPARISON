@@ -1,0 +1,122 @@
+#include <Arduino.h>
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+
+// ─── CONFIG ────────────────────────────────────────────────────────────────
+const char* WIFI_SSID     = "realme";
+const char* WIFI_PASS     = "Ronomessi0733";
+const char* API_URL       = "https://careers.zelbytes.com/api/iot-lab/v1/telemetry";
+const char* API_KEY       = "zil_jmcxx4ivrmofxqpstjisiummjhfscljr";
+const char* DEVICE_ID     = "esp32-001";
+
+const int   MAX_RETRIES   = 3;
+const int   RETRY_DELAY_MS = 2000;   // wait 2s between retries (backoff)
+const int   POST_INTERVAL_MS = 10000; // send every 10 seconds
+// ───────────────────────────────────────────────────────────────────────────
+
+void connectWiFi() {
+  Serial.print("Connecting to WiFi");
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nWiFi connected! IP: " + WiFi.localIP().toString());
+}
+
+// Build the SensorBundle JSON payload
+String buildPayload(float temp, float humidity, bool sensorValid) {
+  StaticJsonDocument<256> doc;
+  doc["device_id"]       = DEVICE_ID;
+  doc["schema_version"]  = "1.0";
+  doc["sensor_valid"]    = sensorValid;
+  doc["temperature"]     = temp;
+  doc["humidity"]        = humidity;
+  doc["timestamp_ms"]    = millis();
+
+  String payload;
+  serializeJson(doc, payload);
+  return payload;
+}
+
+// POST with retry + backoff. Returns HTTP status code, or -1 on total failure.
+int postWithRetry(const String& payload, long& latencyOut) {
+  int statusCode = -1;
+
+  for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    if (WiFi.status() != WL_CONNECTED) {
+      Serial.println("WiFi lost, reconnecting...");
+      connectWiFi();
+    }
+
+    HTTPClient http;
+    http.begin(API_URL);
+    http.addHeader("Content-Type", "application/json");
+    http.addHeader("X-Iot-Lab-Key", API_KEY);
+
+    Serial.printf("[Attempt %d] POSTing payload: %s\n", attempt, payload.c_str());
+
+    long startMs = millis();
+    statusCode   = http.POST(payload);
+    latencyOut   = millis() - startMs;
+
+    String responseBody = http.getString();
+    http.end();
+
+    // ── Handle response codes ──────────────────────────────────────────
+    if (statusCode == 202) {
+      Serial.printf("✅ 202 Accepted in %ld ms\n", latencyOut);
+      return statusCode;                          // success, stop retrying
+
+    } else if (statusCode == 401) {
+      Serial.println("❌ 401 Unauthorized — check your API key. Not retrying.");
+      return statusCode;                          // auth error, no point retrying
+
+    } else if (statusCode == 422) {
+      Serial.println("❌ 422 Unprocessable — bad payload. Not retrying.");
+      Serial.println("Response: " + responseBody);
+      return statusCode;                          // data error, no point retrying
+
+    } else if (statusCode >= 500) {
+      Serial.printf("⚠️  5xx Server error (%d). Retry %d/%d in %ds...\n",
+                    statusCode, attempt, MAX_RETRIES, RETRY_DELAY_MS / 1000);
+      delay(RETRY_DELAY_MS * attempt);            // exponential-ish backoff
+      // continue loop → retry
+
+    } else {
+      Serial.printf("⚠️  Unexpected status %d. Retry %d/%d...\n",
+                    statusCode, attempt, MAX_RETRIES);
+      delay(RETRY_DELAY_MS);
+    }
+  }
+
+  Serial.println("❌ All retries exhausted.");
+  return statusCode;
+}
+
+// ── Fake sensor read (replace with real DHT/BME280 calls) ──────────────────
+float readTemperature() { return 25.0 + random(-30, 50) / 10.0; }
+float readHumidity()    { return 55.0 + random(-100, 100) / 10.0; }
+// ───────────────────────────────────────────────────────────────────────────
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+  connectWiFi();
+}
+
+void loop() {
+  float temp     = readTemperature();
+  float humidity = readHumidity();
+  bool  valid    = (temp > -40 && temp < 85 && humidity >= 0 && humidity <= 100);
+
+  String payload = buildPayload(temp, humidity, valid);
+  long   latency = 0;
+  int    code    = postWithRetry(payload, latency);
+
+  // Latency log (compare this number with your MQTT publish time from Day 12)
+  Serial.printf("📊 HTTP POST latency: %ld ms  |  Status: %d\n\n", latency, code);
+
+  delay(POST_INTERVAL_MS);
+}

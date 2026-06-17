@@ -1,0 +1,60 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <WiFiClientSecure.h>
+#include <ArduinoJson.h>
+#include "secrets.h"
+
+unsigned long lastPub = 0;
+
+// Fake DHT22 readings — realistic temperature & humidity simulation
+float readFakeTemperature() {
+  // Simulates temp between 22.0°C and 30.0°C
+  return 22.0 + (random(0, 800) / 100.0);
+}
+
+float readFakeHumidity() {
+  // Simulates humidity between 50.0% and 80.0%
+  return 50.0 + (random(0, 3000) / 100.0);
+}
+
+bool publishMqtt(float t, float h) {
+  WiFiClientSecure client;
+  client.setInsecure();
+  HTTPClient http;
+  if (!http.begin(client, "https://careers.zelbytes.com/api/iot-lab/v1/mqtt/publish")) return false;
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("X-Iot-Lab-Key", IOT_LAB_KEY);
+  String body = "{\"topic\":\"" + String(MQTT_TOPIC) + "\","
+    "\"payload\":\"{\\\"temp_c\\\":" + String(t, 1) +
+    ",\\\"humidity_pct\\\":" + String(h, 1) + "}\"}";
+  unsigned long startTime = millis();
+  int code = http.POST(body);
+  unsigned long mqttLatency = millis() - startTime;
+  String resp = http.getString();
+  http.end();
+  Serial.printf("MQTT publish HTTP %d: %s\n", code, resp.c_str());
+  Serial.printf("MQTT publish latency: %lu ms\n", mqttLatency);
+  return code == 200 || code == 202;
+}
+
+void setup() {
+  Serial.begin(115200);
+  randomSeed(analogRead(0)); // seed random with floating analog pin noise
+  delay(1000);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  while (WiFi.status() != WL_CONNECTED) delay(200);
+  Serial.println("WiFi connected");
+}
+
+void loop() {
+  if (millis() - lastPub > 60000 || lastPub == 0) {
+    lastPub = millis();
+
+    float t = readFakeTemperature();
+    float h = readFakeHumidity();
+
+    Serial.printf("Fake sensor → Temp: %.1f°C | Humidity: %.1f%%\n", t, h);
+    publishMqtt(t, h);
+    Serial.printf("Published to %s\n", MQTT_TOPIC);
+  }
+}
