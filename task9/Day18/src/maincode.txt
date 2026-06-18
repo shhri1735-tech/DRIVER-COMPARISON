@@ -1,0 +1,132 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <WiFiClientSecure.h>
+#include <ArduinoJson.h>
+#include "secrets.h"
+
+// ─────────────────────────────────────────────
+// Root CA certificate for careers.zelbytes.com
+// HOW TO GET THIS:
+//   Option A (browser): Open careers.zelbytes.com in Chrome →
+//     Click padlock → Connection is secure → Certificate is valid →
+//     Details → Export → Choose "Base64 PEM" format
+//   Option B (terminal):
+//     openssl s_client -connect careers.zelbytes.com:443 -showcerts </dev/null 2>/dev/null \
+//     | openssl x509 -outform PEM
+//   Paste the output between the R"EOF( and )EOF" below.
+// ─────────────────────────────────────────────
+static const char ROOT_CA[] PROGMEM = R"EOF(
+-----BEGIN CERTIFICATE-----
+-----END CERTIFICATE-----
+)EOF";
+
+unsigned long lastPub = 0;
+
+// ─── Sensor simulation (unchanged) ───────────
+float readFakeTemperature() {
+  return 22.0 + (random(0, 800) / 100.0);
+}
+float readFakeHumidity() {
+  return 50.0 + (random(0, 3000) / 100.0);
+}
+
+// ─── Secure MQTT publish ──────────────────────
+bool publishMqtt(float t, float h) {
+  WiFiClientSecure client;
+
+  // ✅ CHANGE 1: Verify the server's certificate instead of skipping it
+  // This ensures you're talking to the REAL careers.zelbytes.com
+  client.setCACert(ROOT_CA);
+
+  // ✅ CHANGE 2: Set a connection timeout (10 seconds)
+  // Prevents the device from hanging forever if the server is down
+  client.setTimeout(10000);
+
+  HTTPClient http;
+
+  // ✅ CHANGE 3: Verify the URL uses HTTPS (already correct in your code — keep it)
+  if (!http.begin(client, "https://careers.zelbytes.com/api/iot-lab/v1/mqtt/publish")) {
+    Serial.println("ERROR: http.begin() failed — check URL");
+    return false;
+  }
+
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("X-Iot-Lab-Key", IOT_LAB_KEY);
+
+  // ✅ CHANGE 4: Build JSON safely using ArduinoJson
+  // (Your original used manual string concatenation which can break
+  //  if temp/humidity values have unexpected formatting)
+  StaticJsonDocument<200> doc;
+  doc["topic"] = MQTT_TOPIC;
+
+  // Build the nested payload string properly
+  char payloadBuf[80];
+  snprintf(payloadBuf, sizeof(payloadBuf),
+           "{\"temp_c\":%.1f,\"humidity_pct\":%.1f}", t, h);
+  doc["payload"] = payloadBuf;
+
+  String body;
+  serializeJson(doc, body);
+
+  // ✅ CHANGE 5: Reconnect WiFi if it dropped before publishing
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi dropped — reconnecting...");
+    WiFi.reconnect();
+    unsigned long start = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - start < 10000) {
+      delay(300);
+    }
+    if (WiFi.status() != WL_CONNECTED) {
+      Serial.println("ERROR: WiFi reconnect failed — skipping publish");
+      http.end();
+      return false;
+    }
+  }
+
+  unsigned long startTime = millis();
+  int code = http.POST(body);
+  unsigned long mqttLatency = millis() - startTime;
+
+  String resp = http.getString();
+  http.end();
+
+  // ✅ CHANGE 6: Better error reporting — shows TLS errors clearly
+  if (code < 0) {
+    Serial.printf("ERROR: HTTP POST failed — code %d (%s)\n",
+                  code, http.errorToString(code).c_str());
+    Serial.println("Tip: If this is -1 or -11, your CA cert may be wrong or expired.");
+    return false;
+  }
+
+  Serial.printf("MQTT publish HTTP %d | latency: %lu ms\n", code, mqttLatency);
+  Serial.printf("Response: %s\n", resp.c_str());
+  return code == 200 || code == 202;
+}
+
+// ─── Setup ────────────────────────────────────
+void setup() {
+  Serial.begin(115200);
+  randomSeed(analogRead(0));
+  delay(1000);
+
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  Serial.print("Connecting to WiFi");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(200);
+    Serial.print(".");
+  }
+  Serial.println("\nWiFi connected");
+  Serial.printf("IP address: %s\n", WiFi.localIP().toString().c_str());
+}
+
+// ─── Loop ─────────────────────────────────────
+void loop() {
+  if (millis() - lastPub > 60000 || lastPub == 0) {
+    lastPub = millis();
+    float t = readFakeTemperature();
+    float h = readFakeHumidity();
+    Serial.printf("\nFake sensor → Temp: %.1f°C | Humidity: %.1f%%\n", t, h);
+    bool ok = publishMqtt(t, h);
+    Serial.printf("Publish to [%s]: %s\n", MQTT_TOPIC, ok ? "SUCCESS" : "FAILED");
+  }
+}

@@ -1,0 +1,11 @@
+NVS Namespace: "polyhouse"
+┌─────────────────┬──────────────────────┐
+│ Key             │ Value                │
+├─────────────────┼──────────────────────┤
+│ wifi_ssid       │ "MyHomeWiFi"         │
+│ wifi_pass       │ "mypassword"         │
+│ mqtt_topic      │ "polyhouse/node01"   │
+│ iot_key         │ "abc123..."          │
+│ node_id         │ "ph-node-01"         │
+│ sample_iv       │ 60                   │
+└─────────────────┴──────────────────────┘

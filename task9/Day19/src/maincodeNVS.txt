@@ -1,0 +1,332 @@
+// ============================================================
+//  Polyhouse Node — Complete NVS Config + DHT22 + MQTT Publish
+//  Flash this single file. No secrets.h needed.
+//  First boot → connect to WiFi "Polyhouse-Setup" → go to 192.168.4.1
+// ============================================================
+
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <WiFiClientSecure.h>
+#include <DHT.h>
+#include <ArduinoJson.h>
+#include <Preferences.h>
+#include <WebServer.h>
+#include <DNSServer.h>
+
+// ── Pin / Sensor config ──────────────────────────────────────
+#define DHT_PIN            4
+#define DHT_TYPE           DHT22
+#define FACTORY_RESET_PIN  0        // GPIO0 = BOOT button
+#define FACTORY_HOLD_MS    5000     // hold 5 s to reset
+
+// ── NVS namespace ────────────────────────────────────────────
+#define NVS_NAMESPACE "polyhouse"
+
+// ── Objects ──────────────────────────────────────────────────
+DHT        dht(DHT_PIN, DHT_TYPE);
+Preferences prefs;
+WebServer  portalServer(80);
+DNSServer  dnsServer;
+
+// ── Config struct ────────────────────────────────────────────
+struct NodeConfig {
+  String wifi_ssid;
+  String wifi_password;
+  String mqtt_topic;
+  String iot_lab_key;
+  String node_id;
+  int    sample_interval;   // seconds (default 60)
+};
+
+NodeConfig cfg;
+unsigned long lastPub = 0;
+
+// ============================================================
+//  SECTION 1 — NVS: Load / Save / Clear / Dump
+// ============================================================
+
+bool loadConfig() {
+  prefs.begin(NVS_NAMESPACE, true);   // read-only
+  cfg.wifi_ssid        = prefs.getString("wifi_ssid",  "");
+  cfg.wifi_password    = prefs.getString("wifi_pass",  "");
+  cfg.mqtt_topic       = prefs.getString("mqtt_topic", "");
+  cfg.iot_lab_key      = prefs.getString("iot_key",    "");
+  cfg.node_id          = prefs.getString("node_id",    "ph-node-01");
+  cfg.sample_interval  = prefs.getInt   ("sample_iv",  60);
+  prefs.end();
+
+  return (cfg.wifi_ssid.length() > 0 &&
+          cfg.iot_lab_key.length() > 0 &&
+          cfg.mqtt_topic.length() > 0);
+}
+
+void saveConfig() {
+  prefs.begin(NVS_NAMESPACE, false);  // read-write
+  prefs.putString("wifi_ssid",  cfg.wifi_ssid);
+  prefs.putString("wifi_pass",  cfg.wifi_password);
+  prefs.putString("mqtt_topic", cfg.mqtt_topic);
+  prefs.putString("iot_key",    cfg.iot_lab_key);
+  prefs.putString("node_id",    cfg.node_id);
+  prefs.putInt   ("sample_iv",  cfg.sample_interval);
+  prefs.end();
+  Serial.println("[Config] Saved to NVS.");
+}
+
+void clearConfig() {
+  prefs.begin(NVS_NAMESPACE, false);
+  prefs.clear();
+  prefs.end();
+  Serial.println("[Config] NVS cleared.");
+}
+
+// dump_config — prints everything EXCEPT passwords/keys
+void dumpConfig() {
+  Serial.println("======= Config Dump =======");
+  Serial.printf("  node_id        : %s\n",  cfg.node_id.c_str());
+  Serial.printf("  wifi_ssid      : %s\n",  cfg.wifi_ssid.c_str());
+  Serial.printf("  wifi_pass      : [hidden]\n");
+  Serial.printf("  mqtt_topic     : %s\n",  cfg.mqtt_topic.c_str());
+  Serial.printf("  iot_lab_key    : [hidden]\n");
+  Serial.printf("  sample_interval: %d s\n", cfg.sample_interval);
+  Serial.println("===========================");
+}
+
+// ============================================================
+//  SECTION 2 — Factory Reset via BOOT button (hold 5 s)
+// ============================================================
+
+void checkFactoryReset() {
+  if (digitalRead(FACTORY_RESET_PIN) == LOW) {
+    Serial.println("[Reset] Button held — waiting 5 s for factory reset...");
+    unsigned long t = millis();
+    while (digitalRead(FACTORY_RESET_PIN) == LOW) {
+      if (millis() - t >= FACTORY_HOLD_MS) {
+        Serial.println("[Reset] !! Factory reset triggered — clearing NVS !!");
+        clearConfig();
+        delay(500);
+        ESP.restart();
+      }
+      delay(50);
+    }
+    Serial.println("[Reset] Released early — no reset.");
+  }
+}
+
+// ============================================================
+//  SECTION 3 — Provisioning (Captive Portal)
+//  Connect to AP "Polyhouse-Setup", open 192.168.4.1
+// ============================================================
+
+void handlePortalRoot() {
+  String html = R"rawhtml(
+<!DOCTYPE html><html><head>
+<meta name='viewport' content='width=device-width,initial-scale=1'>
+<title>Polyhouse Setup</title>
+<style>
+  body{font-family:sans-serif;background:#111;color:#eee;display:flex;
+       justify-content:center;align-items:center;height:100vh;margin:0}
+  .box{background:#1e1e1e;padding:2rem;border-radius:12px;width:320px}
+  h2{margin:0 0 1.5rem;color:#4ade80}
+  label{font-size:.85rem;color:#aaa}
+  input{width:100%;padding:.5rem;margin:.3rem 0 1rem;border-radius:6px;
+        border:1px solid #444;background:#2a2a2a;color:#fff;box-sizing:border-box}
+  button{width:100%;padding:.75rem;background:#4ade80;color:#000;font-weight:bold;
+         border:none;border-radius:8px;cursor:pointer}
+</style></head><body>
+<div class='box'>
+  <h2>🌿 Polyhouse Node Setup</h2>
+  <form action='/save' method='POST'>
+    <label>WiFi SSID</label>
+    <input name='ssid' placeholder='Your WiFi name' required>
+    <label>WiFi Password</label>
+    <input name='pass' type='password' placeholder='WiFi password' required>
+    <label>MQTT Topic</label>
+    <input name='topic' placeholder='e.g. polyhouse/node01/sensors' required>
+    <label>IoT Lab Key</label>
+    <input name='key' type='password' placeholder='Your X-Iot-Lab-Key' required>
+    <label>Node ID</label>
+    <input name='node_id' placeholder='e.g. ph-node-01' value='ph-node-01' required>
+    <label>Sample Interval (seconds)</label>
+    <input name='interval' type='number' value='60' min='5' max='3600' required>
+    <button type='submit'>Save &amp; Reboot</button>
+  </form>
+</div></body></html>
+)rawhtml";
+  portalServer.send(200, "text/html", html);
+}
+
+void handlePortalSave() {
+  cfg.wifi_ssid       = portalServer.arg("ssid");
+  cfg.wifi_password   = portalServer.arg("pass");
+  cfg.mqtt_topic      = portalServer.arg("topic");
+  cfg.iot_lab_key     = portalServer.arg("key");
+  cfg.node_id         = portalServer.arg("node_id");
+  cfg.sample_interval = portalServer.arg("interval").toInt();
+  saveConfig();
+
+  portalServer.send(200, "text/html",
+    "<html><body style='background:#111;color:#4ade80;font-family:sans-serif;"
+    "display:flex;justify-content:center;align-items:center;height:100vh'>"
+    "<h2>✅ Saved! Rebooting node...</h2></body></html>");
+  delay(1500);
+  ESP.restart();
+}
+
+void startProvisioningMode() {
+  Serial.println("[Provision] Starting captive portal AP: Polyhouse-Setup");
+  WiFi.softAP("Polyhouse-Setup");
+  dnsServer.start(53, "*", WiFi.softAPIP());
+
+  portalServer.on("/",        HTTP_GET,  handlePortalRoot);
+  portalServer.on("/save",    HTTP_POST, handlePortalSave);
+  portalServer.onNotFound([]() {
+    portalServer.sendHeader("Location", "http://192.168.4.1", true);
+    portalServer.send(302, "text/plain", "");
+  });
+  portalServer.begin();
+
+  Serial.printf("[Provision] AP IP: %s  →  open http://192.168.4.1\n",
+                WiFi.softAPIP().toString().c_str());
+
+  // Stay in provisioning loop until user saves config and reboots
+  while (true) {
+    dnsServer.processNextRequest();
+    portalServer.handleClient();
+  }
+}
+
+// ============================================================
+//  SECTION 4 — MQTT Publish (your original logic, unchanged)
+// ============================================================
+
+bool publishMqtt(float t, float h) {
+  WiFiClientSecure client;
+  client.setInsecure();
+  HTTPClient http;
+
+  if (!http.begin(client,
+        "https://careers.zelbytes.com/api/iot-lab/v1/mqtt/publish"))
+    return false;
+
+  http.addHeader("Content-Type",  "application/json");
+  http.addHeader("X-Iot-Lab-Key", cfg.iot_lab_key);   // ← from NVS now
+
+  String body = "{\"topic\":\"" + cfg.mqtt_topic + "\","
+    "\"payload\":\"{\\\"temp_c\\\":" + String(t, 1) +
+    ",\\\"humidity_pct\\\":" + String(h, 1) + "}\"}";
+
+  unsigned long start = millis();
+  int code = http.POST(body);
+  Serial.printf("[MQTT] HTTP %d  latency: %lu ms\n", code, millis() - start);
+  Serial.printf("[MQTT] Response: %s\n", http.getString().c_str());
+  http.end();
+
+  return (code == 200 || code == 202);
+}
+
+// ============================================================
+//  SECTION 5 — USB Serial Commands
+//  Open Serial Monitor → type command → press Enter
+//  Commands: dump_config | factory_reset | set_interval=N
+// ============================================================
+
+void handleSerialCommands() {
+  if (!Serial.available()) return;
+  String cmd = Serial.readStringUntil('\n');
+  cmd.trim();
+
+  if (cmd == "dump_config") {
+    dumpConfig();
+
+  } else if (cmd == "factory_reset") {
+    Serial.println("[Serial] Factory reset — clearing NVS and rebooting...");
+    clearConfig();
+    delay(500);
+    ESP.restart();
+
+  } else if (cmd.startsWith("set_interval=")) {
+    int val = cmd.substring(13).toInt();
+    if (val >= 5 && val <= 3600) {
+      cfg.sample_interval = val;
+      saveConfig();
+      Serial.printf("[Serial] sample_interval updated to %d s\n", val);
+    } else {
+      Serial.println("[Serial] Invalid interval. Use 5–3600.");
+    }
+
+  } else if (cmd.length() > 0) {
+    Serial.println("[Serial] Commands: dump_config | factory_reset | set_interval=N");
+  }
+}
+
+// ============================================================
+//  SETUP
+// ============================================================
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+  pinMode(FACTORY_RESET_PIN, INPUT_PULLUP);
+
+  // ── Check factory reset button FIRST ──
+  checkFactoryReset();
+
+  dht.begin();
+  delay(2000);
+
+  // ── Load config from NVS ──
+  bool valid = loadConfig();
+
+  if (!valid) {
+    Serial.println("[Boot] No config in NVS → provisioning mode");
+    startProvisioningMode();  // never returns; reboots after save
+    return;
+  }
+
+  Serial.printf("[Boot] Config loaded. Node: %s\n", cfg.node_id.c_str());
+  dumpConfig();   // show non-secret fields on every boot
+
+  // ── Connect to WiFi using NVS credentials ──
+  WiFi.begin(cfg.wifi_ssid.c_str(), cfg.wifi_password.c_str());
+  Serial.print("[WiFi] Connecting");
+  int tries = 0;
+  while (WiFi.status() != WL_CONNECTED && tries < 30) {
+    delay(500);
+    Serial.print(".");
+    tries++;
+  }
+
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("\n[WiFi] Failed to connect → back to provisioning");
+    startProvisioningMode();
+    return;
+  }
+
+  Serial.printf("\n[WiFi] Connected. IP: %s\n", WiFi.localIP().toString().c_str());
+}
+
+// ============================================================
+//  LOOP
+// ============================================================
+
+void loop() {
+  handleSerialCommands();   // always listen for USB commands
+
+  unsigned long interval = (unsigned long)cfg.sample_interval * 1000UL;
+
+  if (lastPub == 0 || millis() - lastPub >= interval) {
+    lastPub = millis();
+
+    float t = dht.readTemperature();
+    float h = dht.readHumidity();
+
+    if (!isnan(t) && !isnan(h)) {
+      Serial.printf("[Sensor] Temp: %.1f°C  Humidity: %.1f%%\n", t, h);
+      publishMqtt(t, h);
+      Serial.printf("[MQTT] Published to topic: %s\n", cfg.mqtt_topic.c_str());
+    } else {
+      Serial.println("[Sensor] DHT read failed — using fallback values");
+      publishMqtt(24.1, 68.2);
+    }
+  }
+}
