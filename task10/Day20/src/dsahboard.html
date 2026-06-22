@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Zelbytes IoT — Mushroom Polyhouse Telemetry Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg-primary: #ffffff;
+    --bg-secondary: #f5f5f3;
+    --bg-tertiary: #eeece8;
+    --text-primary: #1a1a1a;
+    --text-secondary: #555551;
+    --text-tertiary: #888780;
+    --border: rgba(0,0,0,0.12);
+    --border-strong: rgba(0,0,0,0.22);
+    --green: #3B6D11;
+    --green-bg: #EAF3DE;
+    --amber: #854F0B;
+    --amber-bg: #FAEEDA;
+    --amber-border: #FAC775;
+    --red: #A32D2D;
+    --red-bg: #FCEBEB;
+    --red-border: #F7C1C1;
+    --blue: #185FA5;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+    --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --mono: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg-primary: #1e1e1c;
+      --bg-secondary: #252522;
+      --bg-tertiary: #171715;
+      --text-primary: #f0ede6;
+      --text-secondary: #a8a59e;
+      --text-tertiary: #6b6966;
+      --border: rgba(255,255,255,0.10);
+      --border-strong: rgba(255,255,255,0.20);
+      --green: #97C459;
+      --green-bg: #1a2e0a;
+      --amber: #EF9F27;
+      --amber-bg: #2a1e08;
+      --amber-border: #5a3a0a;
+      --red: #F09595;
+      --red-bg: #2a0e0e;
+      --red-border: #5a1a1a;
+      --blue: #85B7EB;
+    }
+  }
+
+  body {
+    font-family: var(--font);
+    font-size: 14px;
+    color: var(--text-primary);
+    background: var(--bg-tertiary);
+    min-height: 100vh;
+  }
+
+  .topbar {
+    background: var(--bg-primary);
+    border-bottom: 0.5px solid var(--border);
+    padding: 10px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+  .topbar-brand { font-size: 15px; font-weight: 500; display: flex; align-items: center; gap: 8px; }
+  .badge-row { display: flex; gap: 6px; align-items: center; }
+  .badge { font-size: 11px; padding: 3px 9px; border-radius: 999px; font-weight: 500; }
+  .badge-online  { background: var(--green-bg); color: var(--green); }
+  .badge-offline { background: var(--red-bg);   color: var(--red); }
+  .badge-alert   { background: var(--amber-bg); color: var(--amber); }
+
+  .layout { display: flex; min-height: calc(100vh - 48px); }
+
+  .sidebar {
+    width: 210px; min-width: 210px;
+    background: var(--bg-primary);
+    border-right: 0.5px solid var(--border);
+    padding: 14px 0; overflow-y: auto;
+  }
+  .sidebar-label {
+    font-size: 10px; color: var(--text-tertiary);
+    padding: 4px 16px 8px; letter-spacing: 0.07em; text-transform: uppercase;
+  }
+  .node-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 16px; cursor: pointer;
+    border-left: 3px solid transparent; transition: background 0.12s;
+  }
+  .node-item.active { background: var(--bg-secondary); border-left-color: var(--blue); }
+  .node-item:hover:not(.active) { background: var(--bg-secondary); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .dot-green { background: #639922; }
+  .dot-red   { background: #E24B4A; animation: blink 1.5s infinite; }
+  .dot-amber { background: #EF9F27; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.35} }
+  .node-name { font-size: 13px; font-weight: 500; }
+  .node-sub  { font-size: 11px; color: var(--text-tertiary); margin-top: 1px; }
+
+  .content {
+    flex: 1; padding: 18px 20px; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 14px;
+  }
+
+  .tabs { display: flex; gap: 4px; }
+  .tab {
+    padding: 6px 14px; font-size: 13px; border-radius: var(--radius-md);
+    cursor: pointer; border: 0.5px solid transparent;
+    color: var(--text-secondary); transition: background 0.12s;
+  }
+  .tab.active {
+    background: var(--bg-primary); border-color: var(--border-strong);
+    font-weight: 500; color: var(--text-primary);
+  }
+  .tab:hover:not(.active) { background: var(--bg-secondary); }
+
+  .tab-panel { display: none; flex-direction: column; gap: 14px; }
+  .tab-panel.active { display: flex; }
+
+  .card {
+    background: var(--bg-primary); border: 0.5px solid var(--border);
+    border-radius: var(--radius-lg); padding: 14px 16px;
+  }
+  .section-title { font-size: 13px; font-weight: 500; color: var(--text-secondary); margin-bottom: 10px; }
+
+  .metric-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .metric-card { background: var(--bg-secondary); border-radius: var(--radius-md); padding: 12px 14px; }
+  .metric-label { font-size: 11px; color: var(--text-secondary); margin-bottom: 4px; }
+  .metric-val   { font-size: 22px; font-weight: 500; line-height: 1.1; }
+  .metric-val .unit { font-size: 13px; color: var(--text-secondary); margin-left: 1px; }
+  .metric-source { font-size: 10px; color: var(--text-tertiary); margin-top: 5px; font-family: var(--mono); }
+  .ok     { color: var(--green); }
+  .warn   { color: var(--amber); }
+  .danger { color: var(--red); }
+
+  .offline-banner {
+    background: var(--red-bg); border: 0.5px solid var(--red-border);
+    border-radius: var(--radius-md); padding: 10px 14px;
+    display: none; align-items: center; gap: 10px;
+    font-size: 13px; color: var(--red);
+  }
+  .offline-banner code {
+    font-family: var(--mono); background: rgba(162,45,45,0.12);
+    padding: 1px 5px; border-radius: 4px; font-size: 11px;
+  }
+
+  .chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .chart-wrap { position: relative; height: 170px; }
+
+  .alert-row {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 9px 0; border-bottom: 0.5px solid var(--border);
+  }
+  .alert-row:last-child { border-bottom: none; }
+  .alert-icon { font-size: 18px; margin-top: 1px; }
+  .alert-title { font-size: 13px; font-weight: 500; }
+  .alert-sub   { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
+  .alert-time  { font-size: 11px; color: var(--text-tertiary); margin-left: auto; white-space: nowrap; }
+
+  .bind-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .bind-table th {
+    text-align: left; padding: 7px 10px;
+    background: var(--bg-secondary); color: var(--text-secondary);
+    font-weight: 500; border-bottom: 0.5px solid var(--border);
+  }
+  .bind-table td {
+    padding: 8px 10px; border-bottom: 0.5px solid var(--border);
+    font-family: var(--mono); font-size: 11px; color: var(--text-primary);
+  }
+  .bind-table td:first-child { font-family: var(--font); font-size: 12px; }
+  .bind-table tr:last-child td { border-bottom: none; }
+  .bind-table tr:hover td { background: var(--bg-secondary); }
+
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .thresh-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 7px 0; border-bottom: 0.5px solid var(--border); font-size: 12px;
+  }
+  .thresh-row:last-child { border-bottom: none; }
+  .thresh-key   { color: var(--text-secondary); }
+  .thresh-range { font-family: var(--mono); font-weight: 500; }
+  .rationale p  { font-size: 12px; color: var(--text-secondary); line-height: 1.8; }
+  .rationale strong { color: var(--text-primary); }
+
+  .mobile-frame-wrap { display: flex; justify-content: center; padding: 10px 0; }
+  .mobile-frame {
+    width: 375px; background: var(--bg-tertiary);
+    border: 0.5px solid var(--border-strong); border-radius: 20px; overflow: hidden;
+  }
+  .mobile-topbar {
+    background: var(--bg-primary); padding: 10px 14px;
+    border-bottom: 0.5px solid var(--border);
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .mobile-body { padding: 12px; }
+  .fleet-label { font-size: 10px; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 6px; }
+  .fleet-list  { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+  .fleet-node {
+    background: var(--bg-primary); border: 0.5px solid var(--border);
+    border-radius: var(--radius-md); padding: 8px 12px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .fleet-node.warn-node { background: var(--amber-bg); border-color: var(--amber-border); }
+  .fleet-node.off-node  { background: var(--red-bg);   border-color: var(--red-border); }
+  .fleet-left { display: flex; align-items: center; gap: 8px; }
+  .fleet-name { font-size: 13px; font-weight: 500; }
+  .fleet-vals { font-size: 11px; color: var(--text-tertiary); }
+  .mobile-metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
+  .m-card { background: var(--bg-primary); border: 0.5px solid var(--border); border-radius: var(--radius-md); padding: 10px; }
+  .m-label { font-size: 10px; color: var(--text-secondary); margin-bottom: 3px; }
+  .m-val   { font-size: 20px; font-weight: 500; }
+  .m-chart { background: var(--bg-primary); border: 0.5px solid var(--border); border-radius: var(--radius-md); padding: 10px; }
+  .m-chart-label { font-size: 10px; color: var(--text-secondary); margin-bottom: 6px; }
+
+  @media (max-width: 760px) {
+    .sidebar { display: none; }
+    .metric-grid { grid-template-columns: 1fr 1fr; }
+    .chart-grid  { grid-template-columns: 1fr; }
+    .two-col     { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-brand">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#3B6D11" aria-hidden="true"><path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10z"/><path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12"/></svg>
+    Zelbytes IoT — Mushroom Polyhouse Monitor
+  </div>
+  <div class="badge-row">
+    <span class="badge badge-online">3 online</span>
+    <span class="badge badge-offline">1 offline</span>
+    <span class="badge badge-alert">2 alerts</span>
+  </div>
+</header>
+
+<div class="layout">
+  <nav class="sidebar" aria-label="Fleet nodes">
+    <div class="sidebar-label">Fleet</div>
+    <div class="node-item active" onclick="selectNode(this,'Node A — Bay 1','28.4','87.2','online','2s ago')" role="button" tabindex="0">
+      <div class="dot dot-green"></div>
+      <div><div class="node-name">Node A</div><div class="node-sub">Bay 1 · 2s ago</div></div>
+    </div>
+    <div class="node-item" onclick="selectNode(this,'Node B — Bay 2','27.1','89.0','online','5s ago')" role="button" tabindex="0">
+      <div class="dot dot-green"></div>
+      <div><div class="node-name">Node B</div><div class="node-sub">Bay 2 · 5s ago</div></div>
+    </div>
+    <div class="node-item" onclick="selectNode(this,'Node C — Bay 3','31.2','79.1','online','8s ago')" role="button" tabindex="0">
+      <div class="dot dot-amber"></div>
+      <div><div class="node-name">Node C</div><div class="node-sub">Bay 3 · RH alert</div></div>
+    </div>
+    <div class="node-item" onclick="selectNode(this,'Node D — Bay 4','—','—','offline','3 min ago')" role="button" tabindex="0">
+      <div class="dot dot-red"></div>
+      <div><div class="node-name">Node D</div><div class="node-sub">Bay 4 · OFFLINE</div></div>
+    </div>
+  </nav>
+
+  <main class="content">
+    <div class="tabs" role="tablist">
+      <button class="tab active" onclick="showTab('detail')"     role="tab">Node detail</button>
+      <button class="tab"        onclick="showTab('binding')"    role="tab">Data bindings</button>
+      <button class="tab"        onclick="showTab('thresholds')" role="tab">Alert thresholds</button>
+      <button class="tab"        onclick="showTab('mobile')"     role="tab">Mobile (375 px)</button>
+    </div>
+
+    <!-- TAB: Node detail -->
+    <div id="tab-detail" class="tab-panel active" role="tabpanel">
+      <div id="node-heading" style="font-size:15px;font-weight:500">Node A — Bay 1</div>
+
+      <div class="offline-banner" id="offline-banner" role="alert">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="1" y1="1" x2="23" y2="23"/><path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55"/><path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"/><path d="M10.71 5.05A16 16 0 0 1 22.56 9"/><path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg>
+        Device offline — last seen <strong id="last-seen-text" style="margin:0 3px">3 min ago</strong>.
+        LWT status <code>offline</code> received on topic <code>zelbytes/nodes/D/status</code>
+      </div>
+
+      <div class="metric-grid">
+        <div class="metric-card">
+          <div class="metric-label">Temperature</div>
+          <div class="metric-val ok" id="m-temp">28.4<span class="unit">°C</span></div>
+          <div class="metric-source">zelbytes/nodeA/temp</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Humidity (RH)</div>
+          <div class="metric-val ok" id="m-rh">87.2<span class="unit">%</span></div>
+          <div class="metric-source">zelbytes/nodeA/humidity</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Node status</div>
+          <div class="metric-val ok" id="m-status" style="font-size:14px;padding-top:4px">● Online</div>
+          <div class="metric-source">zelbytes/nodeA/status (LWT)</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Last seen</div>
+          <div class="metric-val ok" id="m-lastseen" style="font-size:14px;padding-top:4px">2s ago</div>
+          <div class="metric-source">timestamp from payload</div>
+        </div>
+      </div>
+
+      <div class="chart-grid">
+        <div class="card">
+          <div class="section-title">Temperature — last 24 h</div>
+          <div class="chart-wrap"><canvas id="tempChart"></canvas></div>
+        </div>
+        <div class="card">
+          <div class="section-title">Humidity (RH %) — last 24 h</div>
+          <div class="chart-wrap"><canvas id="rhChart"></canvas></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="section-title">Active alerts</div>
+        <div class="alert-row">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#EF9F27" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          <div>
+            <div class="alert-title">RH out of range — Node C (Bay 3)</div>
+            <div class="alert-sub">Current: 79.1 % · Target: 85–92 % (mushroom polyhouse)</div>
+          </div>
+          <div class="alert-time">12:34</div>
+        </div>
+        <div class="alert-row">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#E24B4A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="1" y1="1" x2="23" y2="23"/><path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55"/><path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"/><path d="M10.71 5.05A16 16 0 0 1 22.56 9"/><path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg>
+          <div>
+            <div class="alert-title">Node D offline — LWT triggered</div>
+            <div class="alert-sub">Topic: zelbytes/nodes/D/status · Payload: "offline"</div>
+          </div>
+          <div class="alert-time">12:31</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB: Data bindings -->
+    <div id="tab-binding" class="tab-panel" role="tabpanel">
+      <div class="card">
+        <div class="section-title">Data binding table — UI widget → MQTT topic / HTTP endpoint</div>
+        <table class="bind-table">
+          <thead>
+            <tr><th>Widget</th><th>MQTT topic / HTTP endpoint</th><th>Payload field</th><th>Protocol</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Temperature card</td>      <td>zelbytes/{node}/temp</td>                         <td>value (float)</td>              <td>MQTT WebSocket</td></tr>
+            <tr><td>Humidity (RH) card</td>    <td>zelbytes/{node}/humidity</td>                     <td>value (float)</td>              <td>MQTT WebSocket</td></tr>
+            <tr><td>Node status dot</td>        <td>zelbytes/{node}/status</td>                       <td>"online"/"offline" (LWT)</td>   <td>MQTT WebSocket</td></tr>
+            <tr><td>Last-seen timestamp</td>   <td>zelbytes/{node}/telemetry</td>                    <td>ts (epoch ms)</td>             <td>MQTT WebSocket</td></tr>
+            <tr><td>24h temperature chart</td> <td>GET /api/nodes/{node}/history?metric=temp</td>    <td>data[] array</td>              <td>HTTP GET</td></tr>
+            <tr><td>24h RH chart</td>           <td>GET /api/nodes/{node}/history?metric=rh</td>      <td>data[] array</td>              <td>HTTP GET</td></tr>
+            <tr><td>RH alert badge</td>         <td>zelbytes/{node}/humidity</td>                     <td>value out of 85–92 range</td>  <td>MQTT WS (client logic)</td></tr>
+            <tr><td>Fleet list status</td>      <td>zelbytes/nodes/+/status</td>                      <td>wildcard subscription</td>     <td>MQTT WebSocket</td></tr>
+            <tr><td>Offline banner</td>         <td>zelbytes/nodes/{node}/status → "offline"</td>     <td>LWT payload</td>               <td>MQTT WebSocket</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- TAB: Alert thresholds -->
+    <div id="tab-thresholds" class="tab-panel" role="tabpanel">
+      <div class="two-col">
+        <div class="card">
+          <div class="section-title">Alert thresholds — agritech rationale</div>
+          <div class="thresh-row"><span class="thresh-key">RH — normal (mushroom polyhouse)</span><span class="thresh-range ok">85 – 92 %</span></div>
+          <div class="thresh-row"><span class="thresh-key">RH — low warning</span>                <span class="thresh-range warn">75 – 84 %</span></div>
+          <div class="thresh-row"><span class="thresh-key">RH — critical low</span>               <span class="thresh-range danger">&lt; 75 %</span></div>
+          <div class="thresh-row"><span class="thresh-key">RH — high warning</span>               <span class="thresh-range warn">93 – 96 %</span></div>
+          <div class="thresh-row"><span class="thresh-key">RH — critical high</span>              <span class="thresh-range danger">&gt; 96 %</span></div>
+          <div class="thresh-row"><span class="thresh-key">Temperature — normal</span>            <span class="thresh-range ok">24 – 30 °C</span></div>
+          <div class="thresh-row"><span class="thresh-key">Temperature — warning</span>           <span class="thresh-range warn">30 – 33 °C</span></div>
+          <div class="thresh-row"><span class="thresh-key">Temperature — critical</span>          <span class="thresh-range danger">&gt; 33 °C</span></div>
+        </div>
+        <div class="card rationale">
+          <div class="section-title">Why these values?</div>
+          <p><strong>Mushroom polyhouse target RH: 85–92 %</strong><br>
+          Oyster and button mushrooms require very high ambient humidity for pin formation and fruiting body development.
+          Below 85 %, surface drying slows pinning. Above 92 %, stagnant moisture promotes bacterial blotch and mould.</p>
+          <br>
+          <p><strong>Temperature: 24–30 °C</strong><br>
+          Fruiting bodies develop optimally in this range. Above 33 °C causes heat stress and yield loss.
+          The warning band (30–33 °C) gives operators time to intervene.</p>
+          <br>
+          <p><strong>LWT offline trigger</strong><br>
+          MQTT Last Will &amp; Testament is set at connection time. If a node drops unexpectedly,
+          the broker auto-publishes <code style="font-family:monospace;font-size:11px">"offline"</code>
+          to its status topic, triggering the UI alert without polling.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB: Mobile layout -->
+    <div id="tab-mobile" class="tab-panel" role="tabpanel">
+      <div class="mobile-frame-wrap">
+        <div class="mobile-frame">
+          <div class="mobile-topbar">
+            <span style="font-size:14px;font-weight:500;display:flex;align-items:center;gap:6px">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3B6D11" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10z"/><path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12"/></svg>
+              Polyhouse Monitor
+            </span>
+            <span class="badge badge-alert">2 alerts</span>
+          </div>
+          <div class="mobile-body">
+            <div class="fleet-label">Fleet</div>
+            <div class="fleet-list">
+              <div class="fleet-node">
+                <div class="fleet-left"><div class="dot dot-green"></div><span class="fleet-name">Node A — Bay 1</span></div>
+                <span class="fleet-vals">28.4 °C · 87 %</span>
+              </div>
+              <div class="fleet-node">
+                <div class="fleet-left"><div class="dot dot-green"></div><span class="fleet-name">Node B — Bay 2</span></div>
+                <span class="fleet-vals">27.1 °C · 89 %</span>
+              </div>
+              <div class="fleet-node warn-node">
+                <div class="fleet-left"><div class="dot dot-amber"></div><span class="fleet-name" style="color:var(--amber)">Node C — Bay 3</span></div>
+                <span style="font-size:11px;color:var(--amber)">RH 79 % ⚠</span>
+              </div>
+              <div class="fleet-node off-node">
+                <div class="fleet-left"><div class="dot dot-red"></div><span class="fleet-name" style="color:var(--red)">Node D — Bay 4</span></div>
+                <span style="font-size:11px;color:var(--red)">Offline</span>
+              </div>
+            </div>
+            <div class="fleet-label">Node A — detail</div>
+            <div class="mobile-metrics">
+              <div class="m-card"><div class="m-label">Temperature</div><div class="m-val ok">28.4 °C</div></div>
+              <div class="m-card"><div class="m-label">Humidity (RH)</div><div class="m-val ok">87.2 %</div></div>
+            </div>
+            <div class="m-chart">
+              <div class="m-chart-label">RH % — last 24 h</div>
+              <canvas id="mobileChart" height="80"></canvas>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const hrs      = Array.from({length:24},(_,i)=>i+':00');
+const baseRH   = [86,87,88,87,86,85,88,90,91,89,87,86,85,84,83,82,79,81,83,85,87,88,87,87];
+const baseTemp = [26,26,25,25,24,25,26,27,28,29,29,28,28,27,27,26,26,27,28,28,29,29,28,28];
+
+function showTab(name){
+  document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  $('tab-'+name).classList.add('active');
+  event.currentTarget.classList.add('active');
+}
+
+function selectNode(el, title, temp, rh, status, lastSeen){
+  document.querySelectorAll('.node-item').forEach(n=>n.classList.remove('active'));
+  el.classList.add('active');
+  $('node-heading').textContent = title;
+  const offline = status === 'offline';
+  $('offline-banner').style.display = offline ? 'flex' : 'none';
+  $('last-seen-text').textContent = lastSeen;
+  if(!offline){
+    const rhNum  = parseFloat(rh);
+    const tNum   = parseFloat(temp);
+    const rhCls  = (rhNum>=85&&rhNum<=92) ? 'ok' : (rhNum>=75||rhNum<=96) ? 'warn' : 'danger';
+    const tCls   = tNum<=30 ? 'ok' : tNum<=33 ? 'warn' : 'danger';
+    $('m-temp').innerHTML = temp+'<span class="unit">°C</span>';
+    $('m-temp').className = 'metric-val '+tCls;
+    $('m-rh').innerHTML   = rh+'<span class="unit">%</span>';
+    $('m-rh').className   = 'metric-val '+rhCls;
+    $('m-status').textContent = '● Online';
+    $('m-status').className   = 'metric-val ok';
+    $('m-lastseen').textContent = lastSeen;
+    $('m-lastseen').className   = 'metric-val ok';
+  } else {
+    $('m-temp').innerHTML = '—'; $('m-temp').className = 'metric-val danger';
+    $('m-rh').innerHTML   = '—'; $('m-rh').className   = 'metric-val danger';
+    $('m-status').textContent = '● Offline'; $('m-status').className = 'metric-val danger';
+    $('m-lastseen').textContent = lastSeen;  $('m-lastseen').className = 'metric-val warn';
+  }
+}
+
+function makeChart(id, label, data, color, min, max, wMin, wMax){
+  const ctx = $(id); if(!ctx) return;
+  return new Chart(ctx, {
+    type:'line',
+    data:{ labels:hrs, datasets:[
+      { label, data, borderColor:color, borderWidth:1.5, pointRadius:0, tension:0.4, fill:false },
+      { label:'min', data:Array(24).fill(wMin), borderColor:'#639922', borderWidth:1, borderDash:[5,4], pointRadius:0, fill:false },
+      { label:'max', data:Array(24).fill(wMax), borderColor:'#E24B4A', borderWidth:1, borderDash:[5,4], pointRadius:0, fill:false }
+    ]},
+    options:{ responsive:true, maintainAspectRatio:false, animation:false,
+      plugins:{ legend:{ display:false } },
+      scales:{
+        x:{ ticks:{ font:{size:10}, maxTicksLimit:8, color:'#888780' }, grid:{ display:false } },
+        y:{ min, max, ticks:{ font:{size:10}, color:'#888780' }, grid:{ color:'rgba(128,128,120,0.12)' } }
+      }
+    }
+  });
+}
+
+window.addEventListener('load', () => {
+  makeChart('tempChart', 'Temp °C',   baseTemp, '#378ADD', 20, 36, 24, 30);
+  makeChart('rhChart',   'Humidity %', baseRH,  '#1D9E75', 70,100, 85, 92);
+  const mc = $('mobileChart');
+  if(mc) new Chart(mc,{
+    type:'line',
+    data:{ labels:hrs, datasets:[{ data:baseRH, borderColor:'#1D9E75', borderWidth:1.5, pointRadius:0, tension:0.4, fill:false }]},
+    options:{ responsive:true, maintainAspectRatio:false, animation:false,
+      plugins:{legend:{display:false}},
+      scales:{ x:{display:false}, y:{min:70,max:100, ticks:{font:{size:9},color:'#888780'}, grid:{display:false}} }
+    }
+  });
+});
+</script>
+</body>
+</html>
